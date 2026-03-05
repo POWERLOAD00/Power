@@ -19,7 +19,7 @@ import asyncio
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "8546917231:AAH12SjiIw3Yk6zCKdE2s0Vc9QNrRfRhXpk"
+BOT_TOKEN = "8521144614:AAG8T8MC3P7m1G_TiGB3AsjgxLnveeNfncI"
 WEBSITE_URL = "https://satellitestress.st/attack"
 LOGIN_URL = "https://satellitestress.st/login"
 WEBSITE_TOKEN = "622de40ac2335a06b834fad06a24c42dcfdc7423b93d35a5add017c08c10db37"
