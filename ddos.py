@@ -4,8 +4,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 # --- CONFIGURATION ---
-TOKEN = "7401669723:AAGNGSEg8PDHXJh1S3u_q9DWGUTeBQqy19c"
-ADMIN_ID =6406583063 # Replace with your Telegram User ID
+TOKEN = "8551582601:AAGAykmL5ph6d9MIgYS4ypGX-VStNkMlVoM"
+ADMIN_ID =7820814565 # Replace with your Telegram User ID
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
